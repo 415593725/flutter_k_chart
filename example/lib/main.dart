@@ -3,6 +3,7 @@ import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_k_chart/chart_style.dart';
 import 'package:flutter_k_chart/flutter_k_chart.dart';
 import 'package:flutter_k_chart/generated/l10n.dart' as k_chart;
 import 'package:flutter_k_chart/k_chart_widget.dart';
@@ -37,6 +38,20 @@ class MyHomePage extends StatefulWidget {
 }
 
 class _MyHomePageState extends State<MyHomePage> {
+  static const _chartColors = ChartColors(
+    vCrossGradient: LinearGradient(
+      begin: Alignment.topCenter,
+      end: Alignment.bottomCenter,
+      colors: [
+        Colors.transparent,
+        Color(0xCC68707E),
+        Color(0xFF68707E),
+        Color(0xCC68707E),
+        Colors.transparent,
+      ],
+    ),
+  );
+
   List<KLineEntity> datas = [];
   bool showLoading = true;
   MainState _mainState = MainState.MA;
@@ -101,10 +116,20 @@ class _MyHomePageState extends State<MyHomePage> {
               width: double.infinity,
               child: KChartWidget(
                 datas,
+                chartColors: _chartColors,
                 isLine: isLine,
                 mainState: _mainState,
                 secondaryState: _secondaryState,
                 volState: VolState.VOL,
+                watermark: const Align(
+                  alignment: Alignment.bottomLeft,
+                  child: Image(
+                    color: Color(0x1A000000),
+                    colorBlendMode: BlendMode.dstIn,
+                    image: NetworkImage(
+                        'https://i-invdn-com.investing.com/ico_flags/80x80/v32/dogecoin.png'),
+                  ),
+                ),
                 fractionDigits: 4,
               ),
             ),
@@ -119,7 +144,11 @@ class _MyHomePageState extends State<MyHomePage> {
           Container(
             height: 230,
             width: double.infinity,
-            child: DepthChart(_bids, _asks),
+            child: DepthChart(
+              _bids,
+              _asks,
+              chartColors: _chartColors,
+            ),
           )
         ],
       ),

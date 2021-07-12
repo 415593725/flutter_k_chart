@@ -6,6 +6,7 @@ import 'package:flutter_k_chart/generated/l10n.dart';
 import 'chart_style.dart';
 import 'entity/info_window_entity.dart';
 import 'entity/k_line_entity.dart';
+import 'k_chart_watermark_widget.dart';
 import 'renderer/chart_painter.dart';
 import 'utils/date_format_util.dart' hide S;
 import 'utils/number_util.dart';
@@ -16,18 +17,31 @@ enum SecondaryState { MACD, KDJ, RSI, WR, NONE }
 
 class KChartWidget extends StatefulWidget {
   final List<KLineEntity> datas;
+  final ChartColors chartColors;
+  final ChartStyle chartStyle;
   final MainState mainState;
   final VolState volState;
   final SecondaryState secondaryState;
   final bool isLine;
+  final double initialScaleX;
+  final void Function(double)? onScaleXUpdated;
+  // 当屏幕滚动到尽头会调用，真为拉到屏幕右侧尽头，假为拉到屏幕左侧尽头
+  final void Function(bool)? onLoadMore;
+  final Widget? watermark;
 
   KChartWidget(
     this.datas, {
+    this.chartColors = const ChartColors(),
+    this.chartStyle = const ChartStyle(),
     this.mainState = MainState.MA,
     this.volState = VolState.VOL,
     this.secondaryState = SecondaryState.MACD,
     this.isLine = false,
     int fractionDigits = 2,
+    this.initialScaleX = 1.0,
+    this.onScaleXUpdated,
+    this.onLoadMore,
+    this.watermark,
   }) {
     NumberUtil.fractionDigits = fractionDigits;
   }
@@ -51,10 +65,13 @@ class _KChartWidgetState extends State<KChartWidget>
 
   double _lastScale = 1.0;
   bool isScale = false, isDrag = false, isLongPress = false;
+  bool _showSelect = false;
 
   @override
   void initState() {
     super.initState();
+
+    mScaleX = widget.initialScaleX;
     mInfoWindowStream = StreamController();
     _controller = AnimationController(
         duration: const Duration(milliseconds: 850), vsync: this);
@@ -99,7 +116,12 @@ class _KChartWidgetState extends State<KChartWidget>
   @override
   void didUpdateWidget(KChartWidget oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.datas != widget.datas) mScrollX = mSelectX = 0.0;
+
+    if (oldWidget.datas != widget.datas) {
+      mScrollX = mSelectX = 0.0;
+      _showSelect = false;
+      mInfoWindowStream.add(null);
+    }
   }
 
   @override
@@ -114,10 +136,34 @@ class _KChartWidgetState extends State<KChartWidget>
   Widget build(BuildContext context) {
     if (widget.datas.isEmpty) {
       mScrollX = mSelectX = 0.0;
-      mScaleX = 1.0;
+      mScaleX = widget.initialScaleX;
+      widget.onScaleXUpdated?.call(widget.initialScaleX);
     }
+
+    final painter = ChartPainter(
+      datas: widget.datas,
+      chartColors: widget.chartColors,
+      chartStyle: widget.chartStyle,
+      scaleX: mScaleX,
+      scrollX: mScrollX,
+      selectX: mSelectX,
+      showSelect: _showSelect,
+      mainState: widget.mainState,
+      volState: widget.volState,
+      secondaryState: widget.secondaryState,
+      isLine: widget.isLine,
+      sink: mInfoWindowStream.sink,
+      opacity: _animation.value,
+      controller: _controller,
+    );
+
     return GestureDetector(
       onHorizontalDragDown: (details) {
+        if (_showSelect) {
+          _showSelect = false;
+          mInfoWindowStream.add(null);
+          notifyChanged();
+        }
         _stopAnimation();
         isDrag = true;
       },
@@ -144,7 +190,14 @@ class _KChartWidgetState extends State<KChartWidget>
           velocity: details.primaryVelocity!,
           tolerance: tolerance,
         );
-        _scrollXController.animateWith(simulation);
+        _scrollXController.animateWith(simulation).whenCompleteOrCancel(() {
+          final scrollX = _scrollXController.value;
+          if (scrollX <= 0) {
+            widget.onLoadMore?.call(true);
+          } else if (scrollX >= ChartPainter.maxScrollX) {
+            widget.onLoadMore?.call(false);
+          }
+        });
       },
       onHorizontalDragCancel: () => isDrag = false,
       onScaleStart: (_) {
@@ -153,6 +206,7 @@ class _KChartWidgetState extends State<KChartWidget>
       onScaleUpdate: (details) {
         if (isDrag || isLongPress) return;
         mScaleX = (_lastScale * details.scale).clamp(0.5, 2.2);
+        widget.onScaleXUpdated?.call(mScaleX);
         notifyChanged();
       },
       onScaleEnd: (_) {
@@ -161,39 +215,32 @@ class _KChartWidgetState extends State<KChartWidget>
       },
       onLongPressStart: (details) {
         isLongPress = true;
-        if (mSelectX != details.globalPosition.dx) {
-          mSelectX = details.globalPosition.dx;
+        _showSelect = true;
+        if (mSelectX != details.localPosition.dx) {
+          mSelectX = details.localPosition.dx;
           notifyChanged();
         }
       },
       onLongPressMoveUpdate: (details) {
-        if (mSelectX != details.globalPosition.dx) {
-          mSelectX = details.globalPosition.dx;
+        if (mSelectX != details.localPosition.dx) {
+          mSelectX = details.localPosition.dx;
           notifyChanged();
         }
       },
       onLongPressEnd: (details) {
         isLongPress = false;
-        mInfoWindowStream.add(null);
-        notifyChanged();
       },
       child: Stack(
         children: <Widget>[
-          CustomPaint(
-            size: const Size(double.infinity, double.infinity),
-            painter: ChartPainter(
-                datas: widget.datas,
-                scaleX: mScaleX,
-                scrollX: mScrollX,
-                selectX: mSelectX,
-                isLongPass: isLongPress,
-                mainState: widget.mainState,
-                volState: widget.volState,
-                secondaryState: widget.secondaryState,
-                isLine: widget.isLine,
-                sink: mInfoWindowStream.sink,
-                opacity: _animation.value,
-                controller: _controller),
+          RepaintBoundary(
+            child: CustomPaint(
+              size: const Size(double.infinity, double.infinity),
+              painter: painter,
+              child: KChartWatermarkWidget(
+                chartPainter: painter,
+                child: widget.watermark,
+              ),
+            ),
           ),
           _buildInfoDialog()
         ],
@@ -227,8 +274,7 @@ class _KChartWidgetState extends State<KChartWidget>
     return StreamBuilder<InfoWindowEntity?>(
         stream: mInfoWindowStream.stream,
         builder: (context, snapshot) {
-          if (!isLongPress ||
-              widget.isLine == true ||
+          if (widget.isLine == true ||
               !snapshot.hasData ||
               snapshot.data?.kLineEntity == null) return const SizedBox();
           KLineEntity entity = snapshot.data!.kLineEntity;
@@ -251,13 +297,16 @@ class _KChartWidgetState extends State<KChartWidget>
               margin: const EdgeInsets.only(left: 10, right: 10, top: 25),
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
               decoration: BoxDecoration(
-                  color: ChartColors.markerBgColor,
+                  color: widget.chartColors.markerBgColor,
                   border: Border.all(
-                      color: ChartColors.markerBorderColor, width: 0.5)),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: List.generate(infoNames.length,
-                    (i) => _buildItem(infos[i].toString(), infoNames[i])),
+                      color: widget.chartColors.markerBorderColor, width: 0.5)),
+              child: IntrinsicWidth(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: List.generate(infoNames.length,
+                      (i) => _buildItem(infos[i].toString(), infoNames[i])),
+                ),
               ),
             ),
           );
@@ -265,28 +314,36 @@ class _KChartWidgetState extends State<KChartWidget>
   }
 
   Widget _buildItem(String info, String infoName) {
-    Color color = Colors.white;
+    final Color color;
     if (info.startsWith("+"))
-      color = Colors.green;
+      color = widget.chartColors.makerUpColor;
     else if (info.startsWith("-"))
-      color = Colors.red;
+      color = widget.chartColors.makerDnColor;
     else
-      color = Colors.white;
+      color = widget.chartColors.makerNormalColor;
     return Container(
-      constraints: const BoxConstraints(
-          minWidth: 95, maxWidth: 110, maxHeight: 14.0, minHeight: 14.0),
+      constraints:
+          const BoxConstraints(minWidth: 95, maxHeight: 14.0, minHeight: 14.0),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         crossAxisAlignment: CrossAxisAlignment.center,
         children: <Widget>[
-          Text("$infoName",
-              style: TextStyle(
-                  color: Colors.white, fontSize: ChartStyle.defaultTextSize)),
+          Text(
+            "$infoName",
+            style: TextStyle(
+              color: widget.chartColors.makerTitleColor,
+              fontSize: widget.chartStyle.defaultTextSize,
+            ),
+          ),
           SizedBox(width: 5),
-          Text(info,
-              style: TextStyle(
-                  color: color, fontSize: ChartStyle.defaultTextSize)),
+          Text(
+            info,
+            style: TextStyle(
+              color: color,
+              fontSize: widget.chartStyle.defaultTextSize,
+            ),
+          ),
         ],
       ),
     );

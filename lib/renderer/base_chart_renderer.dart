@@ -4,6 +4,8 @@ import 'package:flutter_k_chart/utils/number_util.dart';
 export '../chart_style.dart';
 
 abstract class BaseChartRenderer<T> {
+  final ChartColors chartColors;
+  final ChartStyle chartStyle;
   double maxValue, minValue;
   late double scaleY, scaleX;
   double topPadding;
@@ -13,18 +15,21 @@ abstract class BaseChartRenderer<T> {
     ..filterQuality = FilterQuality.high
     ..strokeWidth = 1.0
     ..color = Colors.red;
-  final Paint gridPaint = Paint()
-    ..isAntiAlias = true
-    ..filterQuality = FilterQuality.high
-    ..strokeWidth = 0.5
-    ..color = ChartColors.gridColor;
+  final Paint gridPaint;
 
-  BaseChartRenderer(
-      {required this.chartRect,
-      required this.maxValue,
-      required this.minValue,
-      required this.topPadding,
-      required this.scaleX}) {
+  BaseChartRenderer({
+    required this.chartColors,
+    required this.chartStyle,
+    required this.chartRect,
+    required this.maxValue,
+    required this.minValue,
+    required this.topPadding,
+    required this.scaleX,
+  }) : gridPaint = Paint()
+          ..isAntiAlias = true
+          ..filterQuality = FilterQuality.high
+          ..strokeWidth = 0.5
+          ..color = chartColors.gridColor {
     if (maxValue == minValue) {
       maxValue += 0.5;
       minValue -= 0.5;
@@ -32,7 +37,13 @@ abstract class BaseChartRenderer<T> {
     scaleY = chartRect.height / (maxValue - minValue);
   }
 
-  double getY(double y) => (maxValue - y) * scaleY + chartRect.top;
+  double getY(double y) {
+    final value = (maxValue - y) * scaleY + chartRect.top;
+    if (chartStyle.klineOverflow) {
+      return value;
+    }
+    return value.clamp(chartRect.top, chartRect.bottom);
+  }
 
   String format(double n) {
     return NumberUtil.format(n);
@@ -56,6 +67,6 @@ abstract class BaseChartRenderer<T> {
   }
 
   TextStyle getTextStyle(Color color) {
-    return TextStyle(fontSize: ChartStyle.defaultTextSize, color: color);
+    return TextStyle(fontSize: chartStyle.defaultTextSize, color: color);
   }
 }
